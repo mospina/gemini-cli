@@ -1,4 +1,4 @@
-### **Project Phoenix: Gemini CLI Architectural Analysis & Haskell Rewrite Blueprint**
+### **Project Pierre: Gemini CLI Architectural Analysis & Haskell Rewrite Blueprint**
 
 **Objective:** To conduct a thorough design and architectural analysis of the Gemini CLI TypeScript codebase. The final output of this analysis will be a set of architectural documents and models sufficient to serve as a blueprint for a complete, functional rewrite of the application in Haskell.
 
