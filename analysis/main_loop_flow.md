@@ -115,3 +115,95 @@ sequenceDiagram
     deactivate useGeminiStream (Hook)
     deactivate InputPrompt (React Component)
 ```
+
+---
+
+Excellent question. You've correctly intuited that there must be a similar agentic loop for the interactive mode, and you're right. The mechanism is different, but the concept is the same.
+
+The answer is a definitive **yes**, there is an internal loop in Stage 3 that is conceptually identical to the loop in `runNonInteractive`.
+
+### **Location of the Interactive Agentic Loop**
+
+The loop that interacts with the Model API for the interactive CLI is located in the `core` package, inside this function:
+
+*   **File:** `packages/core/src/core/client.ts`
+*   **Function:** `async function *sendMessageStream(...)`
+
+This is a crucial architectural distinction. The `runNonInteractive` loop lives in the `subagent.ts` file and manages the *entire lifecycle* of an autonomous task. In contrast, the `sendMessageStream` loop in `client.ts` manages the internal "thinking" steps *within a single, complex user turn* for the interactive CLI.
+
+### **How the Interactive Loop Works: Recursive Async Generator**
+
+Instead of a `while (true)` loop, the interactive agentic loop is implemented as a **recursive async generator**. This is a more elegant pattern for an event-driven system, as it allows the function to yield events back to the UI while it's working.
+
+Here is the flow of data types *within this internal loop*:
+
+1.  **Initial Call:** The UI layer (`useGeminiStream`) calls `sendMessageStream` with the user's prompt.
+    *   **Data Type:** `request: PartListUnion` (e.g., `[{ text: 'find all .ts files and count them' }]`)
+
+2.  **First Turn:** `sendMessageStream` creates a `Turn` object and calls its `run()` method.
+    *   **Process:** The `Turn` object streams back events from the Gemini API.
+    *   **Data Type (Yielded):** A stream of `ServerGeminiStreamEvent` objects. These are yielded directly back to the UI layer for rendering.
+
+3.  **The Recursive Check (The "Loop" Condition):** After the `Turn`'s stream is fully consumed, `sendMessageStream` performs a check:
+    *   `if (!turn.pendingToolCalls.length && ...)`
+    *   This condition essentially asks: "Did the model finish its thought process, but **without** requesting a tool call that the user needs to see and confirm?" This can happen if the model is reasoning in multiple steps before deciding on a final action. It also uses the `checkNextSpeaker` utility to ask a smaller, faster model if the AI's turn is logically complete.
+
+4.  **The Recursive Step:** If the condition is met (meaning the model should continue thinking), the function does the following:
+    *   **Process:** It constructs a new, simple prompt to tell the model to continue.
+    *   **Data In (to itself):** `nextRequest: PartListUnion` which is `[{ text: 'Please continue.' }]`.
+    *   **Recursive Call:** It calls `this.sendMessageStream(...)` again with this new "continue" prompt.
+    *   **Chaining the Streams:** It uses `yield*` to seamlessly yield all the events from the recursive call back to the original caller (the UI). This makes the entire multi-step reasoning process appear as a single, continuous stream to the user.
+
+5.  **Loop Termination:** The loop terminates when the `Turn` object finishes and either:
+    *   It has `pendingToolCalls` (the loop breaks, handing control back to the UI to execute the tools).
+    *   The `checkNextSpeaker` utility determines the next speaker should be the `user`.
+
+### **Comparison: `runNonInteractive` vs. `sendMessageStream` Loop**
+
+| Feature | `runNonInteractive` (Subagent Loop) | `sendMessageStream` (Interactive Loop) |
+| :--- | :--- | :--- |
+| **Trigger** | Starts automatically and runs to completion. | Triggered by a single user prompt. |
+| **Mechanism** | An explicit `while (true)` loop. | A **recursive async generator**. |
+| **State Management** | Manages its own state in local variables (`currentMessages`). | It's stateless itself; state is managed by the `GeminiChat` history object. |
+| **Tool Execution** | Directly calls `executeToolCall` and loops internally. | **Yields** a `ToolCallRequest` event to the UI layer, which then handles execution. |
+| **Output** | Populates a final `OutputObject` after the loop finishes. | **Yields** `ServerGeminiStreamEvent`s to the UI in real-time as they arrive. |
+| **Purpose** | To complete a multi-turn autonomous task from start to finish. | To handle all the internal reasoning steps required to respond to a *single* user prompt. |
+
+### **Sequence Diagram: The Internal `sendMessageStream` Loop**
+
+This diagram shows how the function calls itself to continue a thought process.
+
+```mermaid
+sequenceDiagram
+    participant useGeminiStream (Hook)
+    participant sendMessageStream (Core)
+    participant Turn (Core)
+    participant GeminiAPI
+
+    useGeminiStream (Hook)->>+sendMessageStream (Core): Initial User Prompt
+    sendMessageStream (Core)->>+Turn (Core): new Turn()
+    Turn (Core)->>+GeminiAPI: API Call 1
+    
+    GeminiAPI-->>-Turn (Core): Stream Chunk (e.g., a "thought" without a tool call)
+    Turn (Core)-->>-sendMessageStream (Core): Yields Thought Event
+    sendMessageStream (Core)-->>-useGeminiStream (Hook): Yields Thought Event to UI
+
+    Note over Turn (Core),GeminiAPI: Stream from API Call 1 ends.
+    deactivate Turn (Core)
+    
+    sendMessageStream (Core)->>sendMessageStream (Core): **RECURSIVE CALL** with "Please continue."
+    sendMessageStream (Core)->>+Turn (Core): new Turn()
+    Turn (Core)->>+GeminiAPI: API Call 2
+    
+    GeminiAPI-->>-Turn (Core): Stream Chunk (ToolCallRequest: some_tool)
+    Turn (Core)-->>-sendMessageStream (Core): Yields ToolCallRequest Event
+    sendMessageStream (Core)-->>-useGeminiStream (Hook): Yields ToolCallRequest Event to UI
+
+    Note over Turn (Core),GeminiAPI: Stream from API Call 2 ends.
+    deactivate Turn (Core)
+    
+    Note over sendMessageStream (Core): Loop terminates because a tool call is pending.
+    deactivate sendMessageStream (Core)
+```
+
+In summary, while the interactive CLI doesn't have a visible `while` loop for its main operation, it contains a powerful recursive loop within `GeminiClient.sendMessageStream` that serves the same agentic purpose as the one in `runNonInteractive`: to allow the model to reason and act in multiple steps until it's ready to present a final answer or request a tool call from the user.
