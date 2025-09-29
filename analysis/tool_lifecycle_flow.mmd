@@ -1,0 +1,31 @@
+```mermaid
+graph TD
+    A[Tool Registration] --> B[Tool Request]
+    B --> C[Parameter Validation]
+    C --> D{Valid?}
+    D -->|No| E[Error Response]
+    D -->|Yes| F[Create Invocation]
+    F --> G{Confirmation Needed?}
+    G -->|Yes| H[Wait for User Confirmation]
+    G -->|No| I[Schedule for Execution]
+    H --> I
+    I --> J[Execute Tool]
+    J --> K{Success?}
+    K -->|Yes| L[Format Success Result]
+    K -->|No| M[Format Error Result]
+    L --> N[Return to LLM]
+    M --> N
+
+    style A fill:#e1f5fe
+    style B fill:#f3e5f5
+    style C fill:#fff3e0
+    style F fill:#f1f8e9
+    style G fill:#fce4ec
+    style H fill:#fce4ec
+    style I fill:#f1f8e9
+    style J fill:#f1f8e9
+    style K fill:#fff3e0
+    style L fill:#f1f8e9
+    style M fill:#f1f8e9
+    style N fill:#e8f5e9
+```
